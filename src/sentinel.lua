@@ -22,3 +22,8 @@ function Sentinel:end_tick(name)
     end
     r.max_time = math.max(r.max_time, time_delta)
 end
+
+-- src/sentinel.lua
+
+ctx = ctx or {}
+ctx.sentinel = Sentinel

@@ -1,0 +1,25 @@
+{
+  "target_file": "scanner",
+  "timestamp": "2026-10-19T19:15:00",
+  "total_findings": 2,
+  "findings": [
+    {
+      "line": 42,
+      "severity": "warning",
+      "category": "Algorithmic",
+      "rule_id": "pairs_iteration",
+      "message": "Dict iteration -- prefer numeric for in hot paths",
+      "hot_path": false,
+      "source": "        for _, rule in ipairs(ctx.rules or {}) do"
+    },
+    {
+      "line": 42,
+      "severity": "info",
+      "category": "Algorithmic",
+      "rule_id": "ipairs_iteration",
+      "message": "Consider numeric for i=1,#t for performance",
+      "hot_path": false,
+      "source": "        for _, rule in ipairs(ctx.rules or {}) do"
+    }
+  ]
+}

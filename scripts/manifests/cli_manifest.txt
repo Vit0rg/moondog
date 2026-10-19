@@ -1,0 +1,9 @@
+# moondog CLI manifest (headless)
+# renderer.lua and main.lua are intentionally excluded (LÖVE-only).
+# sentinel.lua is excluded because it depends on love.timer.
+# build.sh also strips LÖVE files defensively for --target=cli.
+
+src/rules.lua
+src/scanner.lua
+src/exporter.lua
+src/cli_runner.lua

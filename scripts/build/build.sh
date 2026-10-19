@@ -10,6 +10,7 @@
 #   --output=<path>          (Optional) Override default output path.
 #   --embed-rules            (Optional) Inject default ruleset directly into the build.
 # ==========================================================
+
 set -e
 
 TARGET=""
@@ -21,11 +22,11 @@ RULES_FILE="src/01_root/03_assets/default_rules.lua"
 # --- Argument Parsing ---
 for arg in "$@"; do
     case $arg in
-        --target=*) TARGET="${arg#*=}" ;;
-        --manifest=*) MANIFEST="${arg#*=}" ;;
-        --output=*) OUTPUT="${arg#*=}" ;;
-        --embed-rules) EMBED_RULES=true ;;
-        *) echo "[WARN] Unknown argument: $arg" ;;
+        --target=*)     TARGET="${arg#*=}" ;;
+        --manifest=*)   MANIFEST="${arg#*=}" ;;
+        --output=*)     OUTPUT="${arg#*=}" ;;
+        --embed-rules)  EMBED_RULES=true ;;
+        *)              echo "[WARN] Unknown argument: $arg" ;;
     esac
 done
 
@@ -47,7 +48,7 @@ case $TARGET in
         case "$OUTPUT" in
             cli/*|./cli/*)
                 echo "[FATAL] Output path '$OUTPUT' is inside the source 'cli/' directory."
-                echo "       Build outputs must go to 'build/cli/' to prevent source corruption."
+                echo "        Build outputs must go to 'build/cli/' to prevent source corruption."
                 exit 1
                 ;;
         esac
@@ -90,13 +91,12 @@ local ANSI_YELLOW = "\27[38;5;226m"
 local ANSI_RESET  = "\27[0m"
 local ANSI_DIM    = "\27[2m"
 local ANSI_BOLD   = "\27[1m"
-
 EOF
 fi
 
 # --- Pre-Concatenation Asset Injection (Embed Rules) ---
 if [ "$EMBED_RULES" = true ]; then
-    if [ ! -f "$RULES_FILE" ]; then 
+    if [ ! -f "$RULES_FILE" ]; then
         echo "[FATAL] Rules file not found: $RULES_FILE"
         exit 1
     fi
@@ -114,15 +114,27 @@ fi
 
 # --- Manifest Concatenation & Filtering ---
 CONCAT_COUNT=0
-while IFS= read -r line; do
+
+# FIX 1: '|| [ -n "$line" ]' preserves a final manifest line that lacks a
+# trailing newline. Without it, the last entry (src/main.lua) was silently dropped.
+while IFS= read -r line || [ -n "$line" ]; do
     line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     if [ -z "$line" ] || [[ "$line" == \#* ]]; then continue; fi
 
     # [SAFETY NET: MANIFEST FILTERING]
-    # If this is a CLI build, physically refuse to concatenate LÖVE-specific UI/Renderer files.
-    if [ "$TARGET" == "cli" ] && [[ "$line" == *"love_ui"* || "$line" == *"renderer.lua"* ]]; then
-        echo "[STRIP] Excluding LÖVE-specific UI/Renderer from CLI payload: $line"
-        continue
+    # FIX 3: CLI builds must strip BOTH the renderer and the LÖVE entrypoint,
+    # otherwise love.* callbacks leak into the headless payload.
+    if [ "$TARGET" == "cli" ]; then
+        # Strip LÖVE-specific UI / Renderer
+        if [[ "$line" == *"love_ui"* || "$line" == *"renderer.lua"* ]]; then
+            echo "[STRIP] Excluding LÖVE UI/Renderer from CLI payload: $line"
+            continue
+        fi
+        # Strip the LÖVE entrypoint (any main.lua that is not the CLI entrypoint)
+        if [[ "$line" == *"main.lua" && "$line" != *"cli_main.lua" ]]; then
+            echo "[STRIP] Excluding LÖVE entrypoint from CLI payload: $line"
+            continue
+        fi
     fi
 
     # If this is a LÖVE build, strip CLI-specific entry points or pure CLI tools.
@@ -140,7 +152,7 @@ while IFS= read -r line; do
     echo "-- FILE: $line" >> "$OUTPUT"
     echo "-- ==========================================" >> "$OUTPUT"
     cat "$line" >> "$OUTPUT"
-    echo -e "\n" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
     CONCAT_COUNT=$((CONCAT_COUNT + 1))
 done < "$MANIFEST"
 
@@ -150,9 +162,8 @@ if [ "$CONCAT_COUNT" -eq 0 ]; then
 fi
 
 # --- Post-Concatenation Overrides ---
-# Defensive initialization ensures Phase 1 (Hack) code doesn't crash 
+# Defensive initialization ensures Phase 1 (Hack) code doesn't crash
 # if the root `ctx` table hasn't been explicitly defined yet.
-
 if [ "$TARGET" == "love" ]; then
     echo "" >> "$OUTPUT"
     echo "-- [BUILD-TIME OVERRIDE] LÖVE Environment Initialization" >> "$OUTPUT"
@@ -177,6 +188,35 @@ if [ "$TARGET" == "cli" ]; then
     echo "else" >> "$OUTPUT"
     echo "    print(ANSI_YELLOW .. 'Usage: lua moondog.lua <file.lua>' .. ANSI_RESET)" >> "$OUTPUT"
     echo "end" >> "$OUTPUT"
+fi
+
+# --- FIX 2: Post-Build Validation (Fail Loudly) ---
+# A successful concatenation is not the same as a functional artifact.
+# Assert that the required entrypoint actually landed in the output.
+if [ "$TARGET" == "love" ]; then
+    if ! grep -q "function love.draw" "$OUTPUT"; then
+        echo "[FATAL] Validation failed: 'function love.draw' not found in $OUTPUT."
+        echo "        The LÖVE entrypoint was dropped or does not define love.draw."
+        echo "        Ensure $MANIFEST lists src/main.lua."
+        exit 1
+    fi
+fi
+
+if [ "$TARGET" == "cli" ]; then
+    echo "" >> "$OUTPUT"
+    echo "-- [BUILD-TIME OVERRIDE] CLI Environment Initialization" >> "$OUTPUT"
+    echo "_G.ctx = _G.ctx or {}" >> "$OUTPUT"
+    echo "ctx.is_cli = true" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo "-- CLI entry: delegate to ctx.cli_run (src/cli_runner.lua)." >> "$OUTPUT"
+    echo "-- Exit codes: 0 clean | 1 critical smells | 2 usage/IO error." >> "$OUTPUT"
+    echo "local cli_exit_code = 2" >> "$OUTPUT"
+    echo "if ctx and ctx.cli_run then" >> "$OUTPUT"
+    echo "    cli_exit_code = ctx.cli_run(arg or {})" >> "$OUTPUT"
+    echo "else" >> "$OUTPUT"
+    echo "    io.stderr:write('moondog: fatal: ctx.cli_run missing (cli_runner.lua not in manifest)\\n')" >> "$OUTPUT"
+    echo "end" >> "$OUTPUT"
+    echo "os.exit(cli_exit_code)" >> "$OUTPUT"
 fi
 
 echo "======================================================"
