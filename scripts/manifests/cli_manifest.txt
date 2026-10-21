@@ -7,3 +7,4 @@ src/rules.lua
 src/scanner.lua
 src/exporter.lua
 src/cli_runner.lua
+src/sentinel.lua
